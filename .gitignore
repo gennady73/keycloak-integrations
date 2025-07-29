@@ -1,0 +1,7 @@
+### PyCharm ###
+.idea/*
+
+
+### VisualStudioCode ###
+.vscode/*
+.history/
