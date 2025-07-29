@@ -112,8 +112,8 @@ On the next popup window, select `Audience' from the list of mapper types as fol
 3. Create User Realm Role Mapper:
 - Purpose: Passes Keycloak roles to Jenkins.
 - Mapper type: `User Realm Role`
-- Mapper name: `groups` - logical name, may be any of your choice.
-- Token Claim Name: `roles` (The Jenkins plugin expects this name).
+- Mapper name: `groups` (Logical name, may be any of your choice.)
+- Token Claim Name: `roles` (This specific name is expected by the Jenkins plugin to correctly identify user roles.)
 - Multivalued: `ON`
 - Add to access token: `ON`
 - Add to userinfo: `ON`
@@ -165,6 +165,13 @@ Assign roles:
 ![RHBK Users to Roles binding assign](graphics/rhbk-users-to-roles-binding-assign.png) 
 
 ## 3.0 Jenkins Server Configuration
+- **Important Note on Target Environments**
+
+>This guide details steps that modify core security and authentication configurations. If you are integrating with an existing, production Jenkins instance, it is **strongly recommended** to first perform these steps in an isolated, **non-production** environment.
+>
+>Utilizing a **temporary container** as a "safe playground" allows you to validate the entire configuration **without the risk** of disrupting a live instance that may be in use by your team. Once the integration is proven successful, the same methodology can be applied to your production environment during a planned maintenance window.
+
+
 ### 3.1 Install Necessary Plugins
 Ensure the following plugins are installed via Manage Jenkins -> Plugins:
 
@@ -187,6 +194,9 @@ The Dockerfile to create a trusted image:
 # Use a recent official Jenkins LTS image
 FROM jenkins/jenkins:2.452.3-jdk17
 
+# Define a build-time argument for the keystore password
+ARG KEYSTORE_PASSWORD
+
 # Switch to root user to install plugins
 USER root
 
@@ -205,12 +215,41 @@ RUN keytool -importcert -keystore ${JAVA_HOME}/lib/security/cacerts \
 EXPOSE 8080
 EXPOSE 8443
 EXPOSE 50000
-ENV JENKINS_OPTS="--httpPort=-1 --httpsPort=8443 --httpsKeyStore=/var/jenkins_ssl/server.jks --httpsKeyStorePassword=<keystore-password>"
+
+# Set the JENKINS_OPTS environment variable using the build-time argument
+# IMPORTANT: The default value is empty to prevent accidental exposure
+ENV JENKINS_OPTS="--httpPort=-1 --httpsPort=8443 --httpsKeyStore=/var/jenkins_ssl/server.jks --httpsKeyStorePassword=${KEYSTORE_PASSWORD}"
 
 # Switch back to jenkins user
 USER jenkins
 
 ```
+
+>**Note on Container Runtimes (Podman vs. Docker)**
+>
+>- This guide uses podman for its command examples, but the principles and steps can be directly adapted for docker. For convenience, this repository provides both a [Dockerfile](./Dockerfile) and [Containerfile](./Containerfile) - their contents are identical.
+>
+>- The build instructions within these files are fully compatible with both runtimes. The primary differences between Podman and Docker in the context of this guide relate to runtime command flags (e.g., for networking or SELinux volume labeling), not the image build process itself.
+
+Build Jenkins Image:    
+```sh
+podman build --no-cache --build-arg KEYSTORE_PASSWORD="your-actual-keystore-password" -t my-jenkins -f ./Dockerfile .
+```
+
+Run Jenkins container:  
+```sh
+podman run -d --replace --name jenkins \
+  -p 8443:8443 \
+  -p 8080:8080 \
+  -p 50000:50000 \
+  -v /opt/podman-volumes/jenkins:/var/jenkins_home:Z \
+  --network poc-net \
+  --hostname="jenkins.mycompany.com" \
+  --add-host="sso.mycompany.com:<SSO_SERVER_IP>" \
+  my-jenkins
+```
+
+
 
 ### 3.3 Configure Global Security
 1. Navigate: Manage Jenkins -> Security    
@@ -280,7 +319,9 @@ podman rm jenkins
 sudo rm -rf /opt/podman-volumes/jenkins/*
 
 # 3. Rebuild the image to ensure it's fresh (--no-cache is recommended)
-podman build -t my-jenkins --no-cache -f ./Dockerfile .
+podman build -t my-jenkins --no-cache \
+  --build-arg KEYSTORE_PASSWORD="your-actual-keystore-password" \
+  -f ./Dockerfile .
 
 # 4. Relaunch the container with the run command
 podman run -d --replace --name jenkins \
